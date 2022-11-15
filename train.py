@@ -18,10 +18,10 @@ if __name__ == '__main__':
     parser.add_argument('--batch_size', type=int, default=36, help='size of batch (default: 36)')
     parser.add_argument('--dataset', type=str, default='Shepard-Metzler', help='dataset (dafault: Shepard-Mtzler)')
     parser.add_argument('--train_data_dir', type=str, help='location of training data', \
-                        default="/workspace/dataset/shepard_metzler_7_parts-torch/train")
+                        default="./dataset/shepard_metzler_7_parts-torch/train")
     parser.add_argument('--test_data_dir', type=str, help='location of test data', \
-                        default="/workspace/dataset/shepard_metzler_7_parts-torch/test")
-    parser.add_argument('--root_log_dir', type=str, help='root location of log', default='/workspace/logs')
+                        default="./dataset/shepard_metzler_7_parts-torch/test")
+    parser.add_argument('--root_log_dir', type=str, help='root location of log', default='.\\logs')
     parser.add_argument('--log_dir', type=str, help='log directory (default: GQN)', default='GQN')
     parser.add_argument('--log_interval', type=int, help='interval number of steps for logging', default=100)
     parser.add_argument('--save_interval', type=int, help='interval number of steps for saveing models', default=10000)
@@ -53,9 +53,13 @@ if __name__ == '__main__':
     log_interval_num = args.log_interval
     save_interval_num = args.save_interval
     log_dir = os.path.join(args.root_log_dir, args.log_dir)
-    os.mkdir(log_dir)
-    os.mkdir(os.path.join(log_dir, 'models'))
-    os.mkdir(os.path.join(log_dir,'runs'))
+    log_models_dir = os.path.join(log_dir, 'models')
+    log_runs_dir = os.path.join(log_dir,'runs')
+    os.mkdir('thisisatest')
+    if not os.path.isdir(log_dir): 
+        os.mkdir(log_dir)
+    if not os.path.isdir(log_models_dir): os.mkdir(log_models_dir)
+    if not os.path.isdir(log_runs_dir): os.mkdir(log_runs_dir)
 
     # TensorBoardX
     writer = SummaryWriter(log_dir=os.path.join(log_dir,'runs'))
