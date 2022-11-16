@@ -144,10 +144,13 @@ def convert_raw_to_numpy(dataset_info, raw_data, path, jpeg=False):
     frames = preprocess_frames(dataset_info, example, jpeg)
     cameras = preprocess_cameras(dataset_info, example, jpeg)
     # tf.compat.v1.disable_eager_execution()
+    # tf.compat.v1.Session.run()
     # with tf.compat.v1.train.SingularMonitoredSession() as sess:
     # with tf.compat.v1.train.MonitoredSession() as sess:
         # frames = sess.run(frames)
         # cameras = sess.run(cameras)
+    frames = frames.numpy()
+    cameras = cameras.numpy()
     scene = encapsulate(frames, cameras)
     with gzip.open(path, 'wb') as f:
         torch.save(scene, f)
@@ -200,7 +203,8 @@ if __name__ == '__main__':
     parser.add_argument('-l', '--location',
                         type=str,
                         default='shepard_metzler_5_parts',
-                        help='path to dataset')
+                        help='path to dataset to be converted (tfrecords). Relative \
+                            paths are relative to the folder they were called from')
     args = parser.parse_args()
 
     # get argument values
@@ -211,9 +215,10 @@ if __name__ == '__main__':
     src_dataset_path = pathlib.Path(args.location)
     dst_root_path = pathlib.Path(__file__).parent # the destination folder is this file's folder
 
-    # if the source path is relative, then it is relative to this file
+    # if the source path is relative, then it is relative to the folder location
+    # where this script was called
     if not src_dataset_path.is_absolute():
-        src_dataset_path = dst_root_path / src_dataset_path
+        src_dataset_path = pathlib.Path.cwd() / src_dataset_path
 
     torch_dataset_path = dst_root_path / pathlib.Path(f'{src_dataset_path.parts[-1]}-torch') # postfix the source folder name
     torch_dataset_path_train = torch_dataset_path / 'train'
@@ -225,7 +230,7 @@ if __name__ == '__main__':
     torch_dataset_path.mkdir(exist_ok=True)
     torch_dataset_path_train.mkdir(exist_ok=True)
     torch_dataset_path_test.mkdir(exist_ok=True)
-
+    
 
     cores = mp.cpu_count()
 
@@ -243,3 +248,4 @@ if __name__ == '__main__':
         f = partial(convert_record, dataset_info=dataset_info, dst_folder=torch_dataset_path_test)
         pool.map(f, file_names)
     print(f' [-] {Counter.get()} samples in the test dataset')
+
