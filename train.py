@@ -2,6 +2,8 @@ import argparse
 import datetime
 import math
 import os
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3' 
+import sys
 from tqdm import tqdm
 from tensorboardX import SummaryWriter
 import torch
@@ -14,31 +16,72 @@ from model import GQN
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Generative Query Network Implementation')
-    parser.add_argument('--gradient_steps', type=int, default=2*10**6, help='number of gradient steps to run (default: 2 million)')
-    parser.add_argument('--batch_size', type=int, default=36, help='size of batch (default: 36)')
-    parser.add_argument('--dataset', type=str, default='Shepard-Metzler', help='dataset (dafault: Shepard-Mtzler)')
-    parser.add_argument('--train_data_dir', type=str, help='location of training data', \
-                        default="./dataset/shepard_metzler_7_parts-torch/train")
-    parser.add_argument('--test_data_dir', type=str, help='location of test data', \
-                        default="./dataset/shepard_metzler_7_parts-torch/test")
-    parser.add_argument('--root_log_dir', type=str, help='root location of log', default='.\\logs')
-    parser.add_argument('--log_dir', type=str, help='log directory (default: GQN)', default='GQN')
-    parser.add_argument('--log_interval', type=int, help='interval number of steps for logging', default=100)
-    parser.add_argument('--save_interval', type=int, help='interval number of steps for saveing models', default=10000)
-    parser.add_argument('--workers', type=int, help='number of data loading workers', default=0)
-    parser.add_argument('--device_ids', type=int, nargs='+', help='list of CUDA devices (default: [0])', default=[0])
-    parser.add_argument('--representation', type=str, help='representation network (default: pool)', default='pool')
-    parser.add_argument('--layers', type=int, help='number of generative layers (default: 12)', default=12)
-    parser.add_argument('--shared_core', type=bool, \
-                        help='whether to share the weights of the cores across generation steps (default: False)', \
-                        default=False)
-    parser.add_argument('--seed', type=int, help='random seed (default: None)', default=None)
+    parser.add_argument('--gradient_steps', 
+                        type=int, 
+                        default=2*10**6, 
+                        help='number of gradient steps to run (default: 2 million)')
+    parser.add_argument('--batch_size', 
+                        type=int, 
+                        default=36,   
+                        help='size of batch (default: 36)')
+    parser.add_argument('--dataset', 
+                        type=str, 
+                        default='Shepard-Metzler', 
+                        help='dataset (dafault: Shepard-Mtzler)')
+    parser.add_argument('--train_data_dir', 
+                        type=str, 
+                        default="./dataset/shepard_metzler_7_parts-torch/train",
+                        help='location of training data')
+    parser.add_argument('--test_data_dir', 
+                        type=str, 
+                        default="./dataset/shepard_metzler_7_parts-torch/test",
+                        help='location of test data')
+    parser.add_argument('--root_log_dir', 
+                        type=str,  
+                        default='.\\logs',
+                        help='root location of log')
+    parser.add_argument('--log_dir', 
+                        type=str, 
+                        default='GQN',
+                        help='log directory (default: GQN)')
+    parser.add_argument('--log_interval', 
+                        type=int, 
+                        default=100,
+                        help='interval number of steps for logging')
+    parser.add_argument('--save_interval', 
+                        type=int, 
+                        default=10000,
+                        help='interval number of steps for saveing models')
+    parser.add_argument('--workers', 
+                        type=int, 
+                        default=0,
+                        help='number of data loading workers')
+    parser.add_argument('--device_ids', 
+                        type=int, nargs='+', 
+                        default=[0],
+                        help='list of CUDA devices (default: [0])')
+    parser.add_argument('--representation', 
+                        type=str, 
+                        default='pool',
+                        help='representation network (default: pool)')
+    parser.add_argument('--layers', 
+                        type=int, 
+                        default=12,
+                        help='number of generative layers (default: 12)')
+    parser.add_argument('--shared_core', 
+                        type=bool,
+                        default=False,
+                        help='whether to share the weights of the cores across generation steps (default: False)')
+    parser.add_argument('--seed', 
+                        type=int, 
+                        default=None,
+                        help='random seed (default: None)')
     args = parser.parse_args()
 
     device = f"cuda:{args.device_ids[0]}" if torch.cuda.is_available() else "cpu"
     
     # Seed
-    if args.seed!=None:
+    if args.seed != None:
         torch.manual_seed(args.seed)
         random.seed(args.seed)
 
@@ -55,11 +98,8 @@ if __name__ == '__main__':
     log_dir = os.path.join(args.root_log_dir, args.log_dir)
     log_models_dir = os.path.join(log_dir, 'models')
     log_runs_dir = os.path.join(log_dir,'runs')
-    os.mkdir('thisisatest')
-    if not os.path.isdir(log_dir): 
-        os.mkdir(log_dir)
-    if not os.path.isdir(log_models_dir): os.mkdir(log_models_dir)
-    if not os.path.isdir(log_runs_dir): os.mkdir(log_runs_dir)
+    if not os.path.isdir(log_models_dir): os.makedirs(log_models_dir)
+    if not os.path.isdir(log_runs_dir): os.makedirs(log_runs_dir)
 
     # TensorBoardX
     writer = SummaryWriter(log_dir=os.path.join(log_dir,'runs'))

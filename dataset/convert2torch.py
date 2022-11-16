@@ -1,15 +1,26 @@
-import time
+"""
+Converts Tensorflow records into gzip file format.
+
+"""
+
+
 import os
+import sys
 import collections
 import torch
 import gzip
-from multiprocessing import Process
+import pathlib
+from functools import partial
+import multiprocessing as mp
+from threading import Lock
+from argparse import ArgumentParser
 
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3' 
 import tensorflow as tf
 
 DatasetInfo = collections.namedtuple(
     'DatasetInfo',
-    ['basepath', 'train_size', 'test_size', 'frame_size', 'sequence_size']
+    ['name', 'train_size', 'test_size', 'frame_size', 'sequence_size']
 )
 Context = collections.namedtuple('Context', ['frames', 'cameras'])
 Scene = collections.namedtuple('Scene', ['frames', 'cameras'])
@@ -19,49 +30,49 @@ TaskData = collections.namedtuple('TaskData', ['query', 'target'])
 
 _DATASETS = dict(
     jaco=DatasetInfo(
-        basepath='jaco',
+        name='jaco',
         train_size=3600,
         test_size=400,
         frame_size=64,
         sequence_size=11),
 
     mazes=DatasetInfo(
-        basepath='mazes',
+        name='mazes',
         train_size=1080,
         test_size=120,
         frame_size=84,
         sequence_size=300),
 
     rooms_free_camera_with_object_rotations=DatasetInfo(
-        basepath='rooms_free_camera_with_object_rotations',
+        name='rooms_free_camera_with_object_rotations',
         train_size=2034,
         test_size=226,
         frame_size=128,
         sequence_size=10),
 
     rooms_ring_camera=DatasetInfo(
-        basepath='rooms_ring_camera',
+        name='rooms_ring_camera',
         train_size=2160,
         test_size=240,
         frame_size=64,
         sequence_size=10),
 
     rooms_free_camera_no_object_rotations=DatasetInfo(
-        basepath='rooms_free_camera_no_object_rotations',
+        name='rooms_free_camera_no_object_rotations',
         train_size=2160,
         test_size=240,
         frame_size=64,
         sequence_size=10),
 
     shepard_metzler_5_parts=DatasetInfo(
-        basepath='shepard_metzler_5_parts',
+        name='shepard_metzler_5_parts',
         train_size=900,
         test_size=100,
         frame_size=64,
         sequence_size=15),
 
     shepard_metzler_7_parts=DatasetInfo(
-        basepath='shepard_metzler_7_parts',
+        name='shepard_metzler_7_parts',
         train_size=900,
         test_size=100,
         frame_size=64,
@@ -106,19 +117,16 @@ def preprocess_cameras(dataset_info, example, raw):
         return raw_pose_params
 
 
-def _get_dataset_files(dataset_info, mode, root):
-    """Generates lists of files for a given dataset version."""
-    basepath = dataset_info.basepath
-    base = os.path.join(root, basepath, mode)
-    if mode == 'train':
-        num_files = dataset_info.train_size
+def collect_files(path, ext=None, key=None):
+    if key is None:
+        files = sorted(os.listdir(path))
     else:
-        num_files = dataset_info.test_size
+        files = sorted(os.listdir(path), key=key)
 
-    files = sorted(os.listdir(base))
+    if ext is not None:
+        files = [f for f in files if os.path.splitext(f)[-1] == ext]
 
-    return [os.path.join(base, file) for file in files]
-
+    return [os.path.join(path, fname) for fname in files]
 
 def encapsulate(frames, cameras):
     return Scene(cameras=cameras, frames=frames)
@@ -126,18 +134,20 @@ def encapsulate(frames, cameras):
 
 def convert_raw_to_numpy(dataset_info, raw_data, path, jpeg=False):
     feature_map = {
-        'frames': tf.FixedLenFeature(
+        'frames': tf.compat.v1.FixedLenFeature(
             shape=dataset_info.sequence_size, dtype=tf.string),
-        'cameras': tf.FixedLenFeature(
+        'cameras': tf.compat.v1.FixedLenFeature(
             shape=[dataset_info.sequence_size * 5],
             dtype=tf.float32)
     }
-    example = tf.parse_single_example(raw_data, feature_map)
+    example = tf.compat.v1.parse_single_example(raw_data, feature_map)
     frames = preprocess_frames(dataset_info, example, jpeg)
     cameras = preprocess_cameras(dataset_info, example, jpeg)
-    with tf.train.SingularMonitoredSession() as sess:
-        frames = sess.run(frames)
-        cameras = sess.run(cameras)
+    # tf.compat.v1.disable_eager_execution()
+    # with tf.compat.v1.train.SingularMonitoredSession() as sess:
+    # with tf.compat.v1.train.MonitoredSession() as sess:
+        # frames = sess.run(frames)
+        # cameras = sess.run(cameras)
     scene = encapsulate(frames, cameras)
     with gzip.open(path, 'wb') as f:
         torch.save(scene, f)
@@ -150,51 +160,86 @@ def show_frame(frames, scene, views):
     plt.imshow(frames[scene,views])
     plt.show()
 
+class Counter():
+    """
+        This is a static thread-safe singleton counter
+    """
+    _counter = 0
+    _lock = Lock()
+ 
+    @staticmethod
+    def reset():
+        with Counter._lock:
+            Counter._counter = 0
+
+    @staticmethod
+    def get():
+        with Counter._lock:
+            val = Counter._counter
+            Counter._counter += 1
+            return val
+
+
+
+def convert_record(filepath, dataset_info, dst_folder):
+        engine = tf.compat.v1.python_io.tf_record_iterator(filepath)
+        for i, raw_data in enumerate(engine):
+            dstpath = os.path.join(dst_folder, f'{Counter.get()}.pt.gz')
+            print(f' [-] converting scene {filepath}-{i} into {dstpath}')
+            convert_raw_to_numpy(dataset_info, raw_data, dstpath, True)
 
 if __name__ == '__main__':
-    import sys
+    # tf.compat.v1.disable_eager_execution()
 
-    if len(sys.argv) < 2:
-        print(' [!] you need to give a dataset')
-        exit()
+    # handle arguments
+    parser = ArgumentParser(description='Generative Query Network Implementation')
+    parser.add_argument('dataset',
+                        type=str,
+                        default='shepard_metzler_5_parts',
+                        choices=list(_DATASETS.keys()))
+    parser.add_argument('-l', '--location',
+                        type=str,
+                        default='shepard_metzler_5_parts',
+                        help='path to dataset')
+    args = parser.parse_args()
 
-    DATASET = sys.argv[1]
+    # get argument values
+    DATASET = args.dataset
     dataset_info = _DATASETS[DATASET]
 
-    torch_dataset_path = f'{DATASET}-torch'
-    torch_dataset_path_train = f'{torch_dataset_path}/train'
-    torch_dataset_path_test = f'{torch_dataset_path}/test'
+    # source and destination folders
+    src_dataset_path = pathlib.Path(args.location)
+    dst_root_path = pathlib.Path(__file__).parent # the destination folder is this file's folder
 
-    os.mkdir(torch_dataset_path)
-    os.mkdir(torch_dataset_path_train)
-    os.mkdir(torch_dataset_path_test)
+    # if the source path is relative, then it is relative to this file
+    if not src_dataset_path.is_absolute():
+        src_dataset_path = dst_root_path / src_dataset_path
+
+    torch_dataset_path = dst_root_path / pathlib.Path(f'{src_dataset_path.parts[-1]}-torch') # postfix the source folder name
+    torch_dataset_path_train = torch_dataset_path / 'train'
+    torch_dataset_path_test = torch_dataset_path / 'test'
+
+    # create destination folders, these should not exist yet, if they do the program 
+    # will exit to prevent overwriting existing folders
+    # TODO: remove exists_ok=True
+    torch_dataset_path.mkdir(exist_ok=True)
+    torch_dataset_path_train.mkdir(exist_ok=True)
+    torch_dataset_path_test.mkdir(exist_ok=True)
+
+
+    cores = mp.cpu_count()
 
     ## train
-    file_names = _get_dataset_files(dataset_info, 'train', '.')
-
-    tot = 0
-    for file in file_names:
-        engine = tf.python_io.tf_record_iterator(file)
-        for i, raw_data in enumerate(engine):
-            path = os.path.join(torch_dataset_path_train, f'{tot+i}.pt.gz')
-            print(f' [-] converting scene {file}-{i} into {path}')
-            p = Process(target=convert_raw_to_numpy, args=(dataset_info, raw_data, path, True))
-            p.start();p.join() 
-        tot += i
-
-    print(f' [-] {tot} scenes in the train dataset')
-
+    file_names = collect_files(src_dataset_path / 'train')
+    with mp.Pool(processes=cores) as pool:
+        f = partial(convert_record, dataset_info=dataset_info, dst_folder=torch_dataset_path_train)
+        pool.map(f, file_names)
+    print(f' [-] {Counter.get()} samples in the train dataset')
+    
     ## test
-    file_names = _get_dataset_files(dataset_info, 'test', '.')
-
-    tot = 0
-    for file in file_names:
-        engine = tf.python_io.tf_record_iterator(file)
-        for i, raw_data in enumerate(engine):
-            path = os.path.join(torch_dataset_path_test, f'{tot+i}.pt.gz')
-            print(f' [-] converting scene {file}-{i} into {path}')
-            p = Process(target=convert_raw_to_numpy, args=(dataset_info, raw_data, path, True))
-            p.start();p.join()
-        tot += i
-
-    print(f' [-] {tot} scenes in the test dataset')
+    Counter.reset()
+    file_names = collect_files(src_dataset_path / 'test')
+    with mp.Pool(processes=cores) as pool:
+        f = partial(convert_record, dataset_info=dataset_info, dst_folder=torch_dataset_path_test)
+        pool.map(f, file_names)
+    print(f' [-] {Counter.get()} samples in the test dataset')
