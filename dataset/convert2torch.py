@@ -5,6 +5,8 @@ Converts Tensorflow records into gzip file format.
 
 
 import os
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3' # suppress all log messages 
+
 import sys
 import collections
 import torch
@@ -14,6 +16,7 @@ from functools import partial
 import multiprocessing as mp
 from threading import Lock
 from argparse import ArgumentParser
+import numpy as np
 
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3' 
 import tensorflow as tf
@@ -165,7 +168,7 @@ def show_frame(frames, scene, views):
 
 class Counter():
     """
-        This is a static thread-safe singleton counter
+        Static thread-safe singleton counter
     """
     _counter = 0
     _lock = Lock()
@@ -183,7 +186,6 @@ class Counter():
             return val
 
 
-
 def convert_record(filepath, dataset_info, dst_folder):
         engine = tf.compat.v1.python_io.tf_record_iterator(filepath)
         for i, raw_data in enumerate(engine):
@@ -192,6 +194,29 @@ def convert_record(filepath, dataset_info, dst_folder):
             convert_raw_to_numpy(dataset_info, raw_data, dstpath, True)
 
 if __name__ == '__main__':
+    raise Exception("""
+        There is a bug in this program at the process pools defined starting from
+        line 250. The process function use a shared counter to give unique names
+        to their files. The problem is that we can't share data among processes
+        because each is a unique instantation of the process function, meaning 
+        they're separate programs with separate memory location (at least as far
+        as I know). This will cause multiple samples to have the same file name
+        so files will get overwritten multiple times, losing data in the process.
+        executing this resulted in ~170K files while there should have been 800k.
+
+        A possible solution would be to use threads instead of processes, but 
+        cpython only allows 1 thread to execute python code at a time which is
+        not useful at all in this scenario. This was stated in 
+        https://docs.python.org/3/library/threading.html#module-threading
+            "CPython implementation detail: In CPython, due to the Global Interpreter 
+            Lock, only one thread can execute Python code at once (even though certain 
+            performance-oriented libraries might overcome this limitation). If you want
+            your application to make better use of the computational resources of 
+            multi-core machines, you are advised to use multiprocessing or 
+            concurrent.futures.ProcessPoolExecutor. However, threading is still an 
+            appropriate model if you want to run multiple I/O-bound tasks simultaneously."
+    """)
+
     # tf.compat.v1.disable_eager_execution()
 
     # handle arguments
@@ -231,21 +256,21 @@ if __name__ == '__main__':
     torch_dataset_path_train.mkdir(exist_ok=True)
     torch_dataset_path_test.mkdir(exist_ok=True)
     
-
-    cores = mp.cpu_count()
+    ## test
+    file_names = collect_files(src_dataset_path / 'test')
+    counter = mp.Value('i', 0, lock=True)
+    with mp.Pool(processes = mp.cpu_count()) as pool:
+        f = partial(convert_record, dataset_info=dataset_info, dst_folder=torch_dataset_path_test)
+        l = pool.map(f, file_names)
+        ids = ids + l
+    print(f' [-] {Counter.get()-1} samples in the test dataset')
 
     ## train
-    file_names = collect_files(src_dataset_path / 'train')
-    with mp.Pool(processes=cores) as pool:
-        f = partial(convert_record, dataset_info=dataset_info, dst_folder=torch_dataset_path_train)
-        pool.map(f, file_names)
-    print(f' [-] {Counter.get()} samples in the train dataset')
-    
-    ## test
     Counter.reset()
-    file_names = collect_files(src_dataset_path / 'test')
-    with mp.Pool(processes=cores) as pool:
-        f = partial(convert_record, dataset_info=dataset_info, dst_folder=torch_dataset_path_test)
-        pool.map(f, file_names)
-    print(f' [-] {Counter.get()} samples in the test dataset')
-
+    file_names = collect_files(src_dataset_path / 'train')
+    counter = mp.Value('i', 0, lock=True)
+    with mp.Pool(processes = mp.cpu_count()) as pool:
+        f = partial(convert_record, dataset_info=dataset_info, dst_folder=torch_dataset_path_train)
+        l = pool.map(f, file_names)
+    print(f' [-] {Counter.get()-1} samples in the train dataset')
+    
